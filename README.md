@@ -29,6 +29,16 @@ oss-tester/
 
 ## 环境和安装
 
+安装和运行本项目之前，必须先登录云厂商控制台创建一个**专用 OSS 测试桶**。不要选择已有业务桶或生产桶。创建完成后，从控制台记录以下信息，后续填写到 `.env`：
+
+```text
+OSS_ENDPOINT    OSS/S3 兼容访问地址
+OSS_REGION      测试桶所在地域
+OSS_BUCKET      专用测试桶名称
+```
+
+同时准备仅授权该测试桶的最小权限 AK/SK，或者为测试服务器绑定等价的实例角色/工作负载身份。默认数据面测试需要桶访问、对象读写删除、列表、标签、ACL、版本查询和 Multipart 权限；控制面专项还需要对应的 Bucket 配置权限。请妥善保存控制台显示的凭证，SK 通常只在创建时展示一次。
+
 Linux 服务器直接使用系统 Python，不要求创建虚拟环境。需要 Python 3.10+、Git 和可访问 OSS Endpoint 的网络。
 
 ```bash
@@ -51,6 +61,25 @@ python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py sigv4.py
 
 优先使用云主机工作负载身份、云 SDK 凭证配置或 `AWS_PROFILE`。也支持由密钥管理系统注入的 `OSS_ACCESS_KEY_ID` 和 `OSS_SECRET_ACCESS_KEY` 环境变量；程序不会把它们复制到配置、日志或报告。禁止把 AK/SK 放进命令行参数。
 
+最直接的本地配置方式是复制示例文件并编辑 `.env`：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+在 `.env` 中填写专用测试桶信息和最小权限凭证：
+
+```dotenv
+OSS_ENDPOINT=https://<oss-endpoint>
+OSS_REGION=<region>
+OSS_BUCKET=<dedicated-test-bucket>
+OSS_ACCESS_KEY_ID=<dedicated-test-access-key>
+OSS_SECRET_ACCESS_KEY=<dedicated-test-secret-key>
+```
+
+如果使用 `AWS_PROFILE`、云主机实例角色或工作负载身份，则保持 `OSS_ACCESS_KEY_ID` 和 `OSS_SECRET_ACCESS_KEY` 为空。不要同时配置多套凭证，以免误用权限更高的身份。真实 `.env` 已被 `.gitignore` 排除，仓库中只能保留没有真实密钥的 `.env.example`。
+
 生产凭证必须使用 HTTPS、证书校验和最小权限。示例配置见 `.env.example`，其中所有值都需要替换。HTTP Endpoint 只适合隔离的本地 fake 服务或明确的兼容性验证，`security` 套件会给出 WARN。
 
 ## 数据面测试
@@ -64,10 +93,11 @@ python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py sigv4.py
 
 ### 最常用的全量数据面命令
 
+完成上述 `.env` 配置后，在项目根目录直接执行：
+
 ```bash
-python3 oss_test.py --endpoint https://<oss-endpoint> --region <region> \
-  --bucket <dedicated-test-bucket> --profile standard \
-  --cleanup always --report reports/oss-standard.json
+python3 oss_test.py --profile standard --cleanup always \
+  --report reports/oss-standard.json --confirm-bucket
 ```
 
 参数说明：
@@ -81,6 +111,7 @@ python3 oss_test.py --endpoint https://<oss-endpoint> --region <region> \
 - `--report`：JSON 报告路径；默认写入 `reports/oss-test-<run_id>.json`。报告不包含 AK/SK。
 - `--set section.option=value`：覆盖非敏感配置，例如 `--set execution.multipart_part_size_mb=8`。
 - `--credential-profile`：选择 boto3 shared credentials profile；它与选择测试 profile 的 `--profile` 分开。
+- `--confirm-bucket`：明确确认 `.env` 中的 Bucket 是专用测试桶，而不是业务桶或生产桶。
 
 任何 FAIL 都返回非零退出码；中断返回 130 或 `128+signal`。PASS/FAIL/WARN/SKIP、耗时、错误和关键指标都会写入报告。
 
