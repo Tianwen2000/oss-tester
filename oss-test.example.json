@@ -1,0 +1,34 @@
+{
+  "connection": {
+    "endpoint": "https://s3.example.invalid",
+    "region": "replace-with-region",
+    "bucket": "replace-with-dedicated-test-bucket",
+    "credential_profile": null,
+    "timeout": 30.0,
+    "retry_attempts": 3,
+    "retry_backoff_seconds": 0.25,
+    "verify_tls": true
+  },
+  "execution": {
+    "profile": "standard",
+    "suites": null,
+    "prefix": "oss-test",
+    "cleanup": "always",
+    "concurrency": 4,
+    "multipart_part_size_mb": 5,
+    "multipart_pause_seconds": 0.1,
+    "performance_objects": 8,
+    "performance_object_size_kb": 64
+  },
+  "safety": {
+    "confirm_bucket": false,
+    "confirm_control_plane": false,
+    "confirm_risk": false,
+    "allow_public_acl": false,
+    "allow_public_policy": false,
+    "object_acl": null
+  },
+  "report": {
+    "directory": "reports"
+  }
+}

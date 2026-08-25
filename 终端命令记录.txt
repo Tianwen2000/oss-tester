@@ -1,0 +1,77 @@
+================================================================
+ OSS 测试框架命令记录（已脱敏，2026-08-25）
+ 所有 <...> 均需替换；禁止写入真实 AK/SK 或业务 Bucket
+================================================================
+
+【0. Clone 后进入目录并安装】
+
+git clone <repository-url> oss-tester
+cd oss-tester
+python3 -m pip install --user -r requirements.txt
+
+凭证优先使用工作负载身份或 boto3 shared credentials profile。也可在本地
+.env 或密钥管理系统中设置 OSS_ACCESS_KEY_ID / OSS_SECRET_ACCESS_KEY；.env
+已被 .gitignore 排除。
+
+【1. 查看 profile 和 suite】
+
+python3 oss_test.py --list-suites
+python3 oss_test.py --help
+
+【2. 最常用的全量数据面验收】
+
+python3 oss_test.py \
+  --endpoint https://<oss-endpoint> \
+  --region <region> \
+  --bucket <dedicated-test-bucket> \
+  --profile standard \
+  --cleanup always \
+  --report reports/oss-standard.json
+
+standard 实际选择：network,authentication,data,multipart。
+程序为每次运行生成 oss-test:<timestamp-random-id>: 唯一前缀。
+
+【3. 专项】
+
+python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --profile smoke
+python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --profile multipart
+python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --profile performance --concurrency 4
+python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --profile security
+
+控制面必须使用专用桶、显式桶参数和确认参数：
+
+python3 oss_test.py \
+  --endpoint https://<endpoint> \
+  --region <region> \
+  --bucket <dedicated-control-test-bucket> \
+  --suites control-plane \
+  --confirm-control-plane \
+  --confirm-bucket
+
+【4. 配置覆盖】
+
+python3 oss_test.py --config oss-test.example.json
+python3 oss_test.py <target-arguments> --timeout 30 --retry-attempts 3
+python3 oss_test.py <target-arguments> --set execution.multipart_part_size_mb=8
+python3 oss_test.py <target-arguments> --namespace oss-test --cleanup on-success
+
+【5. 兼容 CLI】
+
+oss_cli.py 保留原常用子命令，但 SDK 客户端统一来自 oss_test.py：
+
+python3 oss_cli.py list --bucket <test-bucket> --prefix <current-run-prefix>
+python3 oss_cli.py head --bucket <test-bucket> --key <current-run-prefix>data/object.txt
+python3 oss_cli.py download --bucket <test-bucket> --key <current-run-prefix>data/object.txt --dest download.bin
+python3 oss_cli.py mp-list --bucket <test-bucket> --prefix <current-run-prefix>
+
+DeleteObject、DeleteObjects、AbortMultipartUpload、建桶、版本控制修改和 Bucket
+配置写入需要 --confirm-risk。DeleteBucket 另外需要 --danger-confirm。统一 runner
+不会自动创建、清空或删除 Bucket，也不会默认写入 public-read ACL/Policy。
+
+【6. 离线验证】
+
+python3 -m unittest discover -s tests -v
+python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py sigv4.py
+
+离线测试使用内存 fake S3，不连接真实 OSS。
+================================================================

@@ -1,0 +1,27 @@
+# 环境变量（含 AK/SK，禁止提交）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+reports/
+tmp/
+temp/
+*.tmp
+
+# IDE
+.idea/
+.workbuddy/
+
+# Local credentials and overrides
+.env
+.env.*
+!.env.example
+oss-test.local.json
