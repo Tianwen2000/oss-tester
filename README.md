@@ -123,9 +123,15 @@ chmod 600 .env
 
 在 `.env` 中填写专用测试桶信息和最小权限凭证：
 
-其中 `OSS_ENDPOINT`、`OSS_REGION` 和 `OSS_BUCKET` 都需要从云厂商控制台的 OSS 桶详情/概览页面获取：桶名称填写 `OSS_BUCKET`，所属地域的 **API 代码** 填写 `OSS_REGION`，默认域名或 S3/API 访问地址填写 `OSS_ENDPOINT`。例如控制台可能把地域显示为“日本-东京”，但 SDK 应填写类似 `ap-tokyo-1` 的 API 代码；Endpoint 主机名中通常也能看到这个代码。不要填写管理控制台 URL；如果详情页只提供对象访问域名，应先向平台管理员确认它是否支持 S3 API 的上传、列表、删除和 Multipart 操作。
+> **控制台参数换算注意：** 桶详情中的三个字段不一定都能原样用于 S3 SDK。
+>
+> - 存储桶名称 `sy-duxie2-5201844379265` 可直接填写为 `OSS_BUCKET`。
+> - 所属地域“日本-东京”只是控制台展示名，`OSS_REGION` 应填写 API 代码 `ap-tokyo-1`。
+> - 默认域名 [http://sy-duxie2-5201844379265.cos.ap-tokyo-1.suzakucos.com](http://sy-duxie2-5201844379265.cos.ap-tokyo-1.suzakucos.com) 可能只是对象访问域名，不一定支持 boto3 的完整 S3 API。本环境实际使用的 S3 API Endpoint 是 [http://151.243.153.26:31027](http://151.243.153.26:31027)。Endpoint 应以平台文档或管理员提供的 API 地址为准，否则可能出现 `403`、`InvalidURI`、`NoSuchBucket` 或签名错误。
+>
+> 上述 HTTP 地址仅适合当前隔离测试环境。正式环境应使用平台提供的 HTTPS Endpoint，避免通过明文连接发送签名请求。
 
-> **注意：** 控制台显示的地域名称不能直接填入 `OSS_REGION`，必须使用 API 地域代码；私有桶的完整数据面测试还需要 AK/SK、Profile 或实例角色。优先使用 HTTPS，且确认 `OSS_ENDPOINT` 是 S3 API 地址而不是仅用于浏览器访问的默认对象域名。
+> **AK/SK 使用规范：** AK/SK 应由 IAM/API 密钥管理正式创建，使用专用测试账号和最小桶权限；不要通过 F12 抓包、日志或后端导出的 JSON 获取或长期复用。若 JSON、日志或聊天记录中出现 `accessKey`、`secretKey`、Token 等敏感字段，应立即停止传播并让管理员轮换凭证。AK/SK 只填写到本机 `.env`，不要提交 Git、写入命令行、报告或截图。
 
 ```dotenv
 OSS_ENDPOINT=https://<oss-endpoint>
@@ -185,6 +191,18 @@ python3 oss_test.py --profile standard --cleanup always \
 
 任何 FAIL 都返回非零退出码；中断返回 130 或 `128+signal`。PASS/FAIL/WARN/SKIP、耗时、错误和关键指标都会写入报告。
 
+### 保留对象供控制台查看
+
+如果需要在测试结束后到 OSS 控制台查看真实上传的对象，必须从项目根目录执行，并使用 `--cleanup never`：
+
+```bash
+cd ~/oss-tester
+python3 oss_test.py --profile standard --cleanup never \
+  --report reports/oss-standard-retain.json --confirm-bucket
+```
+
+该策略会保留本次运行前缀下的已完成对象、版本和删除标记，但仍会 Abort 本次运行产生的未完成 Multipart Upload。查看对象时搜索本次输出中的 `oss-test:<run-id>:` 前缀；确认完成后，只删除该前缀下的测试对象。命令中的 `oss_test.py` 必须从 `~/oss-tester` 执行，不要先进入 `reports/` 目录。
+
 ### 数据面专项示例
 
 Smoke（网络、鉴权和最小对象链路）：
@@ -226,8 +244,8 @@ OSS 的对象操作与多数 Bucket 配置通常共用 S3 兼容 SDK 和认证�
 云厂商不支持或无法安全恢复的控制面能力会标记 WARN/SKIP。控制面专项命令：
 
 ```bash
-python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <dedicated-control-test-bucket> \
-  --suites control-plane --confirm-control-plane --confirm-bucket
+python3 oss_test.py --suites control-plane \
+  --confirm-control-plane --confirm-bucket
 ```
 
 `public-read`、公开 Policy、不可逆的版本控制变化、删除桶和全量删除不属于默认行为。旧 `oss_cli.py bucket-delete` 还需要 `--confirm-risk --danger-confirm`，但验收流程不应使用删桶命令。

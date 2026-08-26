@@ -1244,8 +1244,10 @@ def main(argv: list[str] | None = None, *, client: Any = None) -> int:
         # it is a CLI-only operation request.
         validate_config(config, require_target=True)
         selected = choose_suites(config, args.suites)
-        if "control-plane" in selected and (not args.bucket or not args.confirm_control_plane):
-            raise ValueError("control-plane requires explicit --bucket and --confirm-control-plane")
+        if "control-plane" in selected and (not config["connection"].get("bucket") or not args.confirm_control_plane):
+            raise ValueError("control-plane requires a configured bucket and --confirm-control-plane")
+        if "control-plane" in selected and not args.confirm_bucket:
+            raise ValueError("control-plane requires --confirm-bucket to confirm the configured bucket is dedicated")
         if config["safety"].get("allow_public_policy") and not (args.allow_public_policy and args.confirm_risk):
             raise ValueError("public Policy requires explicit --allow-public-policy and --confirm-risk")
         if config["safety"].get("object_acl") == "public-read" and not (args.allow_public_acl and args.confirm_risk):

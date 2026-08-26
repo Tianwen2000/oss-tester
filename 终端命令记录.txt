@@ -51,12 +51,15 @@ python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <te
 控制面必须使用专用桶、显式桶参数和确认参数：
 
 python3 oss_test.py \
-  --endpoint https://<endpoint> \
-  --region <region> \
-  --bucket <dedicated-control-test-bucket> \
   --suites control-plane \
   --confirm-control-plane \
   --confirm-bucket
+
+【2.1. 保留对象供控制台查看】
+
+cd ~/oss-tester
+python3 oss_test.py --profile standard --cleanup never \
+  --report reports/oss-standard-retain.json --confirm-bucket
 
 【4. 配置覆盖】
 

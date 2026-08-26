@@ -363,6 +363,15 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(runner.results[-1].name, "control-plane.restore")
         self.assertEqual(runner.results[-1].status, "PASS")
 
+    def test_control_plane_can_use_configured_env_bucket_with_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "control-plane.json"
+            env = {"OSS_ENDPOINT": "http://127.0.0.1:9", "OSS_REGION": "test-1", "OSS_BUCKET": "unit-test-bucket"}
+            with patch("oss_test.load_dotenv"), patch.dict(os.environ, env, clear=True):
+                code = main(["--suites", "control-plane", "--confirm-control-plane", "--confirm-bucket", "--report", str(report)], client=FakeControlS3())
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(report.read_text(encoding="utf-8"))["overall_status"], "PASS")
+
     def test_main_returns_nonzero_and_writes_report_for_failure(self):
         class Broken(FakeS3):
             def head_bucket(self, Bucket): raise s3_error("AccessDenied", "denied")
