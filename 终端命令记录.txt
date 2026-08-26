@@ -5,9 +5,11 @@
 
 【0. Clone 后进入目录并安装】
 
-git clone <repository-url> oss-tester
+git clone --depth 1 https://github.com/Tianwen2000/oss-tester.git oss-tester
 cd oss-tester
-python3 -m pip install --user -r requirements.txt
+python3 -m pip install --user \
+  --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+  -r requirements.txt
 
 凭证优先使用工作负载身份或 boto3 shared credentials profile。也可在本地
 .env 或密钥管理系统中设置 OSS_ACCESS_KEY_ID / OSS_SECRET_ACCESS_KEY；.env

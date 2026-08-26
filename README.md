@@ -41,16 +41,52 @@ OSS_BUCKET      专用测试桶名称
 
 Linux 服务器直接使用系统 Python，不要求创建虚拟环境。需要 Python 3.10+、Git 和可访问 OSS Endpoint 的网络。
 
+先检查 Python 版本：
+
 ```bash
-git clone <your-repository-url> oss-tester
-cd oss-tester
-python3 -m pip install --user -r requirements.txt
+python3 --version
 ```
 
-依赖安装必须在 `git clone` 项目并进入目录后执行。开发机离线验证可安装开发依赖：
+如果版本低于 3.10，可以执行下面这一段命令自动识别常见发行版并安装 Python 3.11：
 
 ```bash
-python3 -m pip install --user -r requirements-dev.txt
+set -eu
+if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+  PYTHON_BIN=python3
+else
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update && sudo apt-get install -y python3.11 python3.11-venv python3-pip
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y python3.11 python3.11-pip
+  elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y python3.11 python3.11-pip
+  else
+    echo "Unsupported package manager; install Python 3.10+ using the server administrator's standard method." >&2
+    exit 2
+  fi
+  PYTHON_BIN=python3.11
+fi
+"$PYTHON_BIN" --version
+"$PYTHON_BIN" -m pip --version
+echo "Use $PYTHON_BIN for the remaining project commands."
+```
+
+不要默认删除旧 Python，也不要直接替换系统的 `/usr/bin/python3`。Ubuntu、Debian、云初始化脚本和系统运维工具可能依赖发行版自带的 Python。新版本与旧版本并行安装即可；只有确认旧版本是手工安装、没有系统依赖，并经过管理员审批后，才考虑单独卸载。
+
+```bash
+git clone --depth 1 https://github.com/Tianwen2000/oss-tester.git oss-tester
+cd oss-tester
+python3 -m pip install --user \
+  --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+  -r requirements.txt
+```
+
+如果上面的版本检查选择了 `python3.11`，将安装和运行命令中的 `python3` 替换为 `python3.11`。依赖安装必须在 `git clone` 项目并进入目录后执行。上面的命令使用清华 PyPI 镜像加速；如果该镜像不可用，可删除 `--index-url https://pypi.tuna.tsinghua.edu.cn/simple` 后使用 Python 官方源。开发机离线验证可安装开发依赖：
+
+```bash
+python3 -m pip install --user \
+  --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+  -r requirements-dev.txt
 python3 -m unittest discover -s tests -v
 python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py sigv4.py
 ```
