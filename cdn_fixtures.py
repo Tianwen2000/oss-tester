@@ -22,7 +22,9 @@ from typing import Any, BinaryIO, Callable
 
 DEFAULT_FIXTURE_DIRECTORY = Path("fixtures") / "cdn"
 DEFAULT_PREFIX = "cdn-test"
-PREFIX_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+PREFIX_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?:/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})*$"
+)
 CONTENT_ENCODING_FALLBACK_CODES = {
     "InternalError", "NotImplemented", "NotSupported", "XNotImplemented",
     "InvalidRequest", "InvalidArgument", "MethodNotAllowed", "501",
@@ -52,8 +54,10 @@ FIXTURE_SPECS: tuple[FixtureSpec, ...] = (
     FixtureSpec("redirect/308.html", "text/html; charset=utf-8", "max-age=60", cdn_status=308),
     FixtureSpec("errors/404.html", "text/html; charset=utf-8", "no-cache", cdn_status=404),
     FixtureSpec("errors/403.html", "text/html; charset=utf-8", "no-cache", cdn_status=403),
+    FixtureSpec("errors/405.html", "text/html; charset=utf-8", "no-cache", cdn_status=405),
     FixtureSpec("errors/500.html", "text/html; charset=utf-8", "no-cache", cdn_status=500),
     FixtureSpec("errors/503.html", "text/html; charset=utf-8", "no-cache", cdn_status=503),
+    FixtureSpec("errors/416.html", "text/html; charset=utf-8", "no-cache", cdn_status=416),
 )
 
 
@@ -143,9 +147,13 @@ def _stream_digest(stream: BinaryIO, *, chunk_size: int = 1024 * 1024) -> tuple[
 
 
 def _validate_base_prefix(prefix: str) -> str:
-    base = prefix.rstrip(":")
+    base = prefix.strip().strip("/")
+    if base.endswith(":"):
+        base = base.rstrip(":")
     if not PREFIX_PATTERN.fullmatch(base):
         raise ValueError("fixture prefix must contain only letters, digits, dots, underscores, colons, or hyphens")
+    if "//" in base or ".." in base:
+        raise ValueError("fixture prefix must not contain empty or parent path segments")
     return base
 
 
@@ -155,7 +163,7 @@ def new_fixture_prefix(base: str = DEFAULT_PREFIX, *, now: datetime | None = Non
     base = _validate_base_prefix(base)
     timestamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{timestamp}-{token or uuid.uuid4().hex[:10]}"
-    return run_id, f"{base}:{run_id}:"
+    return run_id, f"{base}/{run_id}/"
 
 
 def _safe_manifest_value(value: Any) -> Any:
@@ -221,7 +229,7 @@ def seed_cdn_fixtures(
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", run_id):
             raise ValueError("run_id contains unsupported characters")
         actual_run_id = run_id
-        prefix = f"{_validate_base_prefix(base_prefix)}:{run_id}:"
+        prefix = f"{_validate_base_prefix(base_prefix)}/{run_id}/"
 
     objects: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []

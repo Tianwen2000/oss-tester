@@ -30,7 +30,7 @@ oss-tester/
 │   ├── large.bin, range.bin   # 流式大文件和 Range 场景
 │   ├── gzip.txt               # gzip Content-Encoding 场景
 │   ├── redirect/*.html        # 301/302/307/308 源站页面
-│   └── errors/*.html          # 403/404/500/503 源站页面
+│   └── errors/*.html          # 403/404/405/416/500/503 源站页面
 ├── 终端命令记录.txt          # 已脱敏的中文命令汇总
 └── reports/                  # 运行时生成的 JSON 报告，默认不提交 Git
 ```
@@ -189,7 +189,7 @@ python3 oss_test.py --profile standard --cleanup always \
 - `--endpoint`、`--region`、`--bucket`：实际 S3 兼容服务和专用测试桶；也可使用 `OSS_ENDPOINT`、`OSS_REGION`、`OSS_BUCKET`。
 - `--config oss-test.example.json`：读取不含凭证的 JSON 配置；环境变量和显式 CLI 参数可覆盖其中的值。
 - `--profile`：`smoke`、`standard`、`performance`、`multipart`、`security` 或 `control-plane`。`standard` 是 `network,authentication,data,multipart` 全量数据面；`--suites a,b` 可精确覆盖 profile。
-- `--prefix`/`--namespace`：每次运行会自动生成 `oss-test:{timestamp-random-id}:` 形式的唯一前缀，所有测试对象只写入该前缀。
+- `--prefix`/`--namespace`：每次运行会自动生成 `oss-test/{timestamp-random-id}/` 形式的唯一前缀（对象存储控制台通常显示为测试文件夹），所有测试对象只写入该前缀。
 - `--cleanup`：`always`（默认）、`on-success` 或 `never`。无论策略如何，本次前缀下的未完成 Multipart Upload 都会尝试 Abort；对象、版本和删除标记只按本次前缀清理。
 - `--timeout`、`--retry-attempts`、`--retry-backoff`：boto3 连接/读取超时、应用层重试次数和指数退避。
 - `--report`：JSON 报告路径；默认写入 `reports/oss-test-<run_id>.json`。报告不包含 AK/SK。
@@ -209,7 +209,7 @@ python3 oss_test.py --profile standard --cleanup never \
   --report reports/oss-standard-retain.json --confirm-bucket
 ```
 
-该策略会保留本次运行前缀下的已完成对象、版本和删除标记，但仍会 Abort 本次运行产生的未完成 Multipart Upload。查看对象时搜索本次输出中的 `oss-test:<run-id>:` 前缀；确认完成后，只删除该前缀下的测试对象。命令中的 `oss_test.py` 必须从 `~/oss-tester` 执行，不要先进入 `reports/` 目录。
+该策略会保留本次运行前缀下的已完成对象、版本和删除标记，但仍会 Abort 本次运行产生的未完成 Multipart Upload。查看对象时搜索本次输出中的 `oss-test/<run-id>/` 前缀；确认完成后，只删除该前缀下的测试对象。命令中的 `oss_test.py` 必须从 `~/oss-tester` 执行，不要先进入 `reports/` 目录。
 
 ### 数据面专项示例
 
@@ -255,9 +255,9 @@ python3 oss_cli.py seed-cdn-fixtures \
   --confirm-bucket
 ```
 
-该命令会自动生成并上传 13 个对象：`small.txt`、8 MiB 的 `large.bin`、Range 用 `range.bin`、长缓存 `cache.txt`、gzip 编码的 `gzip.txt`、301/302/307/308 重定向页面和 404/403/500/503 错误页面。上传使用文件流，不会把大文件一次性读入内存；每次运行都会追加类似 `cdn-test:<timestamp-random-id>:` 的唯一前缀，默认保留对象，不会清理桶或覆盖其他运行。
+该命令会自动生成并上传 15 个对象：`small.txt`、8 MiB 的 `large.bin`、Range 用 `range.bin`、长缓存 `cache.txt`、gzip 编码的 `gzip.txt`、301/302/307/308 重定向页面和 403/404/405/416/500/503 错误页面。对象会放在类似 `cdn-test/<timestamp-random-id>/` 的测试文件夹下；上传使用文件流，不会把大文件一次性读入内存；每次运行都会追加唯一目录，默认保留对象，不会清理桶或覆盖其他运行。
 
-Manifest 会记录实际 Key、字节数、SHA-256、ETag、Content-Type、Cache-Control、Content-Encoding 和 CDN 规则预期状态，供 CDN 测试项目读取。`redirect/` 和 `errors/` 文件只是源站内容，直接访问通常仍是 200；要得到 3xx/4xx/5xx，需在 CDN 或源站路由中配置对应规则。命令失败会返回非零退出码，并保留已上传的本次唯一前缀供排查。
+Manifest 会记录实际 Key、字节数、SHA-256、ETag、Content-Type、Cache-Control、Content-Encoding 和 CDN 规则预期状态，供 CDN 测试项目通过 `--fixture-manifest` 直接读取。`redirect/` 和 `errors/` 文件只是源站内容，直接访问通常仍是 200；要得到 3xx/4xx/5xx，需在 CDN 或源站路由中配置对应规则。命令失败会返回非零退出码，并保留已上传的本次测试文件夹供排查。
 
 部分 S3 兼容网关对 `Content-Encoding: gzip` 支持不完整。如果带该头的上传返回明确的 `InternalError`、`NotImplemented` 或类似兼容性错误，程序会自动重试为不带该头的普通对象，并将整体结果标为 `WARN`（命令仍返回 0）；manifest 会记录 `requested_content_encoding=gzip`、实际 `content_encoding=null`。这表示对象已准备完成，但 CDN gzip 响应头需要单独验证，不能把它当作 gzip 能力 PASS。
 

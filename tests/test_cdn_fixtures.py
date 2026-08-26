@@ -33,7 +33,7 @@ class CdnFixtureTests(unittest.TestCase):
     def test_generation_creates_all_resources_without_large_memory_api(self):
         with tempfile.TemporaryDirectory() as directory:
             root = generate_fixture_directory(directory)
-            self.assertEqual(len(FIXTURE_SPECS), 13)
+            self.assertEqual(len(FIXTURE_SPECS), 15)
             self.assertTrue((root / "large.bin").stat().st_size >= 8 * 1024 * 1024)
             self.assertEqual(
                 gzip.decompress((root / "gzip.txt").read_bytes()),
@@ -58,7 +58,7 @@ class CdnFixtureTests(unittest.TestCase):
                 directory=directory, base_prefix="cdn-test", confirm_bucket=True, run_id="run-b", progress=None,
             )
             self.assertNotEqual(first["prefix"], second["prefix"])
-            self.assertTrue(first["prefix"].startswith("cdn-test:run-a:"))
+            self.assertTrue(first["prefix"].startswith("cdn-test/run-a/"))
             self.assertTrue(all(item["key"].startswith(first["prefix"]) for item in first["objects"]))
 
     def test_uploads_stream_files_and_writes_safe_manifest(self):
@@ -71,15 +71,15 @@ class CdnFixtureTests(unittest.TestCase):
                 confirm_bucket=True, run_id="run-123", progress=None,
             )
             self.assertEqual(manifest["status"], "PASS")
-            self.assertEqual(manifest["object_count"], 13)
-            self.assertEqual(len(fake.uploads), 13)
+            self.assertEqual(manifest["object_count"], 15)
+            self.assertEqual(len(fake.uploads), 15)
             self.assertTrue(all(item["body_type"] is not bytes for item in fake.uploads))
             gzip_upload = next(item for item in fake.uploads if item["key"].endswith("gzip.txt"))
             self.assertEqual(gzip_upload["kwargs"]["ContentEncoding"], "gzip")
             self.assertEqual(gzip_upload["kwargs"]["CacheControl"], "max-age=300")
             self.assertTrue(Path(manifest["manifest_path"]).exists())
             payload = json.loads(Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(payload["prefix"], "cdn-test:run-123:")
+            self.assertEqual(payload["prefix"], "cdn-test/run-123/")
             self.assertNotIn("secret", json.dumps(payload).lower())
 
     def test_gzip_header_incompatibility_falls_back_to_warning(self):
@@ -91,7 +91,7 @@ class CdnFixtureTests(unittest.TestCase):
                 run_id="gzip-fallback", progress=None,
             )
             self.assertEqual(manifest["status"], "WARN")
-            self.assertEqual(manifest["object_count"], 13)
+            self.assertEqual(manifest["object_count"], 15)
             self.assertEqual(len(manifest["warnings"]), 1)
             gzip_item = next(item for item in manifest["objects"] if item["path"] == "gzip.txt")
             self.assertIsNone(gzip_item["content_encoding"])
@@ -107,7 +107,7 @@ class CdnFixtureTests(unittest.TestCase):
                 run_id="failed-run", progress=None,
             )
             self.assertEqual(manifest["status"], "FAIL")
-            self.assertEqual(manifest["object_count"], 12)
+            self.assertEqual(manifest["object_count"], 14)
             self.assertNotIn(sentinel, Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
 
 
