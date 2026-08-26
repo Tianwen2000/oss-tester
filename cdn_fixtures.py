@@ -23,6 +23,10 @@ from typing import Any, BinaryIO, Callable
 DEFAULT_FIXTURE_DIRECTORY = Path("fixtures") / "cdn"
 DEFAULT_PREFIX = "cdn-test"
 PREFIX_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+CONTENT_ENCODING_FALLBACK_CODES = {
+    "InternalError", "NotImplemented", "NotSupported", "XNotImplemented",
+    "InvalidRequest", "InvalidArgument", "MethodNotAllowed", "501",
+}
 
 
 @dataclass(frozen=True)
@@ -176,6 +180,23 @@ def _safe_error(exc: BaseException) -> str:
     return message.replace("\n", " ").replace("\r", " ")[:500]
 
 
+def _error_code(exc: BaseException) -> str:
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error", {})
+        if isinstance(error, dict) and error.get("Code"):
+            return str(error["Code"])
+    return type(exc).__name__
+
+
+def _can_fallback_content_encoding(exc: BaseException) -> bool:
+    """Return whether a provider likely rejected only Content-Encoding metadata."""
+
+    code = _error_code(exc)
+    message = _safe_error(exc).lower()
+    return code in CONTENT_ENCODING_FALLBACK_CODES or "content-encoding" in message or "encoding" in message
+
+
 def seed_cdn_fixtures(
     client: Any,
     *,
@@ -204,20 +225,36 @@ def seed_cdn_fixtures(
 
     objects: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
     for spec in FIXTURE_SPECS:
         source = root / spec.relative_path
         key = prefix + spec.relative_path.replace(os.sep, "/")
         metadata = {"oss-tester-fixture": "cdn", "oss-tester-run": actual_run_id}
+        applied_content_encoding = spec.content_encoding
+        fallback_warning: str | None = None
         try:
-            with source.open("rb") as stream:
-                response = client.put_object(
-                    Bucket=bucket,
-                    Key=key,
-                    Body=stream,
-                    ContentType=spec.content_type,
-                    CacheControl=spec.cache_control,
-                    **({"ContentEncoding": spec.content_encoding} if spec.content_encoding else {}),
-                    Metadata=metadata,
+            def upload(*, include_content_encoding: bool) -> Any:
+                with source.open("rb") as stream:
+                    return client.put_object(
+                        Bucket=bucket,
+                        Key=key,
+                        Body=stream,
+                        ContentType=spec.content_type,
+                        CacheControl=spec.cache_control,
+                        **({"ContentEncoding": spec.content_encoding} if include_content_encoding and spec.content_encoding else {}),
+                        Metadata=metadata,
+                    )
+
+            try:
+                response = upload(include_content_encoding=True)
+            except Exception as exc:
+                if not spec.content_encoding or not _can_fallback_content_encoding(exc):
+                    raise
+                response = upload(include_content_encoding=False)
+                applied_content_encoding = None
+                fallback_warning = (
+                    f"provider rejected Content-Encoding: {spec.content_encoding}; "
+                    "uploaded without the header, so verify CDN gzip behavior separately"
                 )
             with source.open("rb") as stream:
                 byte_count, sha256 = _stream_digest(stream)
@@ -230,14 +267,20 @@ def seed_cdn_fixtures(
                 "etag": str(response.get("ETag", "")).strip('"'),
                 "content_type": spec.content_type,
                 "cache_control": spec.cache_control,
-                "content_encoding": spec.content_encoding,
+                "content_encoding": applied_content_encoding,
+                "requested_content_encoding": spec.content_encoding,
                 "metadata": metadata,
                 "origin_status": 200,
                 "cdn_rule_status": spec.cdn_status,
             }
             objects.append(item)
+            if fallback_warning:
+                warnings.append({"path": spec.relative_path, "warning": fallback_warning})
+                if progress:
+                    progress(f"[WARN] {spec.relative_path}: {fallback_warning}")
             if progress:
-                progress(f"[PASS] {spec.relative_path} -> {key} ({byte_count} bytes)")
+                if not fallback_warning:
+                    progress(f"[PASS] {spec.relative_path} -> {key} ({byte_count} bytes)")
         except Exception as exc:
             message = _safe_error(exc)
             errors.append({"path": spec.relative_path, "error": message})
@@ -258,10 +301,12 @@ def seed_cdn_fixtures(
         "object_count": len(objects),
         "objects": objects,
         "errors": errors,
-        "status": "FAIL" if errors else "PASS",
+        "warnings": warnings,
+        "status": "FAIL" if errors else ("WARN" if warnings else "PASS"),
         "notes": [
             "redirect and errors files are origin objects; CDN rules must produce the listed cdn_rule_status",
             "objects are intentionally retained for subsequent CDN tests",
+            "a WARN on gzip means the provider accepted the object only without Content-Encoding metadata",
         ],
     }
     if manifest_path:

@@ -88,8 +88,11 @@ def _seed_cdn_fixtures(args: argparse.Namespace) -> int:
     )
     print(f"Fixture prefix: {manifest['prefix']}")
     print(f"Manifest: {manifest.get('manifest_path', manifest_path)}")
-    print(f"Summary: {manifest['status']} objects={manifest['object_count']} errors={len(manifest['errors'])}")
-    return 0 if manifest["status"] == "PASS" else 1
+    print(
+        f"Summary: {manifest['status']} objects={manifest['object_count']} "
+        f"warnings={len(manifest.get('warnings', []))} errors={len(manifest['errors'])}"
+    )
+    return 0 if manifest["status"] in {"PASS", "WARN"} else 1
 
 
 def _confirm(args: argparse.Namespace, action: str) -> None:

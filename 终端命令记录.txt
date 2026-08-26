@@ -69,6 +69,8 @@ python3 oss_cli.py seed-cdn-fixtures \
 
 如果本地 Fixture 文件被修改，需要重新生成时再加 --overwrite。redirect/ 和
 errors/ 文件本身是源站内容，不会自动产生 3xx/4xx/5xx，需由 CDN 规则配置。
+如果网关不支持 Content-Encoding: gzip，程序会自动以普通对象重试并标记 WARN；
+manifest 中会记录实际是否带有 gzip 响应头。
 
 【2.1. 保留对象供控制台查看】
 

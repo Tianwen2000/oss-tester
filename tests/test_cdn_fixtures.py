@@ -12,14 +12,18 @@ from cdn_fixtures import FIXTURE_SPECS, generate_fixture_directory, seed_cdn_fix
 
 
 class FixtureFakeS3:
-    def __init__(self, fail_suffix: str | None = None, error_text: str = "upload failed"):
+    def __init__(self, fail_suffix: str | None = None, error_text: str = "upload failed", reject_encoding: bool = False):
         self.fail_suffix = fail_suffix
         self.error_text = error_text
+        self.reject_encoding = reject_encoding
         self.uploads: list[dict] = []
 
     def put_object(self, **kwargs):
         if self.fail_suffix and kwargs["Key"].endswith(self.fail_suffix):
             raise RuntimeError(self.error_text)
+        if self.reject_encoding and kwargs["Key"].endswith("gzip.txt") and kwargs.get("ContentEncoding"):
+            from oss_test import ClientError
+            raise ClientError({"Error": {"Code": "InternalError", "Message": "unsupported Content-Encoding"}}, "PutObject")
         body = kwargs["Body"]
         self.uploads.append({"key": kwargs["Key"], "body_type": type(body), "body": body.read(), "kwargs": kwargs})
         return {"ETag": '"fixture-etag"'}
@@ -77,6 +81,21 @@ class CdnFixtureTests(unittest.TestCase):
             payload = json.loads(Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
             self.assertEqual(payload["prefix"], "cdn-test:run-123:")
             self.assertNotIn("secret", json.dumps(payload).lower())
+
+    def test_gzip_header_incompatibility_falls_back_to_warning(self):
+        fake = FixtureFakeS3(reject_encoding=True)
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = seed_cdn_fixtures(
+                fake, bucket="test-bucket", endpoint="http://s3.test", region="test-1",
+                directory=directory, manifest_path=Path(directory) / "manifest.json", confirm_bucket=True,
+                run_id="gzip-fallback", progress=None,
+            )
+            self.assertEqual(manifest["status"], "WARN")
+            self.assertEqual(manifest["object_count"], 13)
+            self.assertEqual(len(manifest["warnings"]), 1)
+            gzip_item = next(item for item in manifest["objects"] if item["path"] == "gzip.txt")
+            self.assertIsNone(gzip_item["content_encoding"])
+            self.assertEqual(gzip_item["requested_content_encoding"], "gzip")
 
     def test_partial_upload_failure_returns_fail_and_redacts_credentials(self):
         sentinel = "fixture-secret-value"

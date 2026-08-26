@@ -259,6 +259,8 @@ python3 oss_cli.py seed-cdn-fixtures \
 
 Manifest 会记录实际 Key、字节数、SHA-256、ETag、Content-Type、Cache-Control、Content-Encoding 和 CDN 规则预期状态，供 CDN 测试项目读取。`redirect/` 和 `errors/` 文件只是源站内容，直接访问通常仍是 200；要得到 3xx/4xx/5xx，需在 CDN 或源站路由中配置对应规则。命令失败会返回非零退出码，并保留已上传的本次唯一前缀供排查。
 
+部分 S3 兼容网关对 `Content-Encoding: gzip` 支持不完整。如果带该头的上传返回明确的 `InternalError`、`NotImplemented` 或类似兼容性错误，程序会自动重试为不带该头的普通对象，并将整体结果标为 `WARN`（命令仍返回 0）；manifest 会记录 `requested_content_encoding=gzip`、实际 `content_encoding=null`。这表示对象已准备完成，但 CDN gzip 响应头需要单独验证，不能把它当作 gzip 能力 PASS。
+
 如需重新生成本地 Fixture 文件，可添加 `--overwrite`；这只改写项目内 `fixtures/cdn/` 文件，不会删除 OSS 对象。后续 CDN 回归应使用 manifest 中的 Key 和 SHA-256，避免依赖固定对象名。
 
 ## 控制面测试
