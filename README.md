@@ -123,7 +123,9 @@ chmod 600 .env
 
 在 `.env` 中填写专用测试桶信息和最小权限凭证：
 
-其中 `OSS_ENDPOINT`、`OSS_REGION` 和 `OSS_BUCKET` 都需要从云厂商控制台的 OSS 桶详情/概览页面获取：桶名称填写 `OSS_BUCKET`，所属地域填写 `OSS_REGION`，默认域名或 S3/API 访问地址填写 `OSS_ENDPOINT`。不要填写管理控制台 URL；如果详情页只提供对象访问域名，应先向平台管理员确认它是否支持 S3 API 的上传、列表、删除和 Multipart 操作。
+其中 `OSS_ENDPOINT`、`OSS_REGION` 和 `OSS_BUCKET` 都需要从云厂商控制台的 OSS 桶详情/概览页面获取：桶名称填写 `OSS_BUCKET`，所属地域的 **API 代码** 填写 `OSS_REGION`，默认域名或 S3/API 访问地址填写 `OSS_ENDPOINT`。例如控制台可能把地域显示为“日本-东京”，但 SDK 应填写类似 `ap-tokyo-1` 的 API 代码；Endpoint 主机名中通常也能看到这个代码。不要填写管理控制台 URL；如果详情页只提供对象访问域名，应先向平台管理员确认它是否支持 S3 API 的上传、列表、删除和 Multipart 操作。
+
+> **注意：** 控制台显示的地域名称不能直接填入 `OSS_REGION`，必须使用 API 地域代码；私有桶的完整数据面测试还需要 AK/SK、Profile 或实例角色。优先使用 HTTPS，且确认 `OSS_ENDPOINT` 是 S3 API 地址而不是仅用于浏览器访问的默认对象域名。
 
 ```dotenv
 OSS_ENDPOINT=https://<oss-endpoint>

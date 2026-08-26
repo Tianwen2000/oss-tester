@@ -57,6 +57,7 @@ REPORT_SCHEMA_VERSION = 1
 STATUSES = ("PASS", "FAIL", "WARN", "SKIP")
 NAMESPACE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+REGION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 UNSUPPORTED_CODES = {
     "NotImplemented", "NotSupported", "XNotImplemented", "InvalidRequest",
     "MethodNotAllowed", "NotImplementedException", "501",
@@ -272,6 +273,8 @@ def validate_config(config: dict[str, Any], *, require_target: bool = False) -> 
     region = connection.get("region")
     if region is not None and (not isinstance(region, str) or not region.strip()):
         raise ValueError("connection.region must be a non-empty string")
+    if region is not None and not REGION_PATTERN.fullmatch(str(region)):
+        raise ValueError("connection.region must be the provider API region code (for example ap-tokyo-1), not a localized display name")
     bucket = connection.get("bucket")
     if require_target and (not isinstance(bucket, str) or not bucket.strip()):
         raise ValueError("--bucket or OSS_BUCKET is required; use a dedicated test bucket")

@@ -231,6 +231,12 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not contain credentials"):
             validate_config(bad, require_target=True)
 
+    def test_localized_region_display_name_is_rejected(self):
+        bad = self.config()
+        bad["connection"]["region"] = "日本-东京"
+        with self.assertRaisesRegex(ValueError, "provider API region code"):
+            validate_config(bad, require_target=True)
+
     def test_data_suite_content_assertions_and_cleanup_scope(self):
         config = self.config(); fake = FakeS3(); runner = OSSRunner(config, fake)
         runner.run_data()
