@@ -93,18 +93,37 @@ python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py sigv4.py
 
 如系统 Python 启用了 PEP 668，按服务器管理规范使用 `--break-system-packages`，或由管理员安装到系统路径。不要提交 `.venv/`、缓存或报告。
 
+## 更新项目
+
+后续在服务器更新代码时，在项目目录执行：
+
+```bash
+cd ~/oss-tester
+git pull --ff-only
+python3 -m pip install --user \
+  --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+  -r requirements.txt
+```
+
+`git pull --ff-only` 只允许无冲突的快进更新，能够避免覆盖服务器上的本地修改。如果命令因本地修改而停止，请先执行 `git status` 检查现场，再由管理员决定如何处理；不要使用强制重置或强制覆盖命令。只有 `requirements.txt` 发生变化时才必须重新安装依赖。
+
 ## 凭证和 TLS
 
 优先使用云主机工作负载身份、云 SDK 凭证配置或 `AWS_PROFILE`。也支持由密钥管理系统注入的 `OSS_ACCESS_KEY_ID` 和 `OSS_SECRET_ACCESS_KEY` 环境变量；程序不会把它们复制到配置、日志或报告。禁止把 AK/SK 放进命令行参数。
 
-最直接的本地配置方式是复制示例文件并编辑 `.env`：
+最直接的本地配置方式是在 `oss-tester` 项目根目录复制示例文件并编辑 `.env`：
 
 ```bash
+cd ~/oss-tester
 cp .env.example .env
 chmod 600 .env
 ```
 
+`cp` 只负责复制模板，不会从云控制台自动读取 Endpoint、Region、Bucket 或 AK/SK；复制完成后必须编辑 `.env` 并填入实际值。后续运行读取的是 `.env`，不是 `.env.example`。如果 `.env` 已经存在并且填过凭证，不要重复执行 `cp .env.example .env`，因为它会覆盖本地配置；需要保留原文件时可使用 `cp -n .env.example .env`。
+
 在 `.env` 中填写专用测试桶信息和最小权限凭证：
+
+其中 `OSS_ENDPOINT`、`OSS_REGION` 和 `OSS_BUCKET` 都需要从云厂商控制台的 OSS 桶详情/概览页面获取：桶名称填写 `OSS_BUCKET`，所属地域填写 `OSS_REGION`，默认域名或 S3/API 访问地址填写 `OSS_ENDPOINT`。不要填写管理控制台 URL；如果详情页只提供对象访问域名，应先向平台管理员确认它是否支持 S3 API 的上传、列表、删除和 Multipart 操作。
 
 ```dotenv
 OSS_ENDPOINT=https://<oss-endpoint>
@@ -115,6 +134,19 @@ OSS_SECRET_ACCESS_KEY=<dedicated-test-secret-key>
 ```
 
 如果使用 `AWS_PROFILE`、云主机实例角色或工作负载身份，则保持 `OSS_ACCESS_KEY_ID` 和 `OSS_SECRET_ACCESS_KEY` 为空。不要同时配置多套凭证，以免误用权限更高的身份。真实 `.env` 已被 `.gitignore` 排除，仓库中只能保留没有真实密钥的 `.env.example`。
+
+`.env` 配置完成后，必须在项目根目录执行命令；Endpoint、Region 和 Bucket 不需要再次写在命令行中。只需通过布尔值检查配置是否被读取，不要打印凭证内容：
+
+```bash
+python3 -c 'from dotenv import load_dotenv; import os; load_dotenv(); print({name: bool(os.getenv(name)) for name in ("OSS_ENDPOINT", "OSS_REGION", "OSS_BUCKET", "OSS_ACCESS_KEY_ID", "OSS_SECRET_ACCESS_KEY")})'
+```
+
+如果提示缺少 Endpoint 或 Bucket，请确认当前目录有名为 `.env` 的文件（不是 `.env.txt`），并确认变量名完全是 `OSS_ENDPOINT`、`OSS_REGION`、`OSS_BUCKET`。不要在 Bash 中直接输入 `<endpoint>`、`<region>` 这类占位符；尖括号会被 Shell 当成重定向符号。配置正确后，标准命令可以直接照抄：
+
+```bash
+python3 oss_test.py --profile standard --cleanup always \
+  --report reports/oss-standard.json --confirm-bucket
+```
 
 生产凭证必须使用 HTTPS、证书校验和最小权限。示例配置见 `.env.example`，其中所有值都需要替换。HTTP Endpoint 只适合隔离的本地 fake 服务或明确的兼容性验证，`security` 套件会给出 WARN。
 
@@ -156,32 +188,31 @@ python3 oss_test.py --profile standard --cleanup always \
 Smoke（网络、鉴权和最小对象链路）：
 
 ```bash
-python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --profile smoke
+python3 oss_test.py --profile smoke --confirm-bucket
 ```
 
 核心对象数据面（不含 Multipart）：
 
 ```bash
-python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --suites network,authentication,data
+python3 oss_test.py --suites network,authentication,data --confirm-bucket
 ```
 
 Multipart（可调整为 8 MiB，仍满足 S3 最小分片约束）：
 
 ```bash
-python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --profile multipart --set execution.multipart_part_size_mb=8
+python3 oss_test.py --profile multipart --set execution.multipart_part_size_mb=8 --confirm-bucket
 ```
 
 性能（并发上限由配置校验限制为 8）：
 
 ```bash
-python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> --profile performance --concurrency 4
+python3 oss_test.py --profile performance --concurrency 4 --confirm-bucket
 ```
 
 对象 ACL 按需修改。默认只读取 ACL；`public-read` 必须同时显式确认：
 
 ```bash
-python3 oss_test.py --endpoint https://<endpoint> --region <region> --bucket <test-bucket> \
-  --suites data --object-acl private
+python3 oss_test.py --suites data --object-acl private --confirm-bucket
 ```
 
 ## 控制面测试
