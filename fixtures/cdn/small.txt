@@ -1,0 +1,1 @@
+oss-tester CDN fixture: small origin object.

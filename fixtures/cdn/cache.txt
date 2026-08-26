@@ -1,0 +1,1 @@
+oss-tester CDN cache fixture. Change the query string and compare cache behavior.

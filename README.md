@@ -9,8 +9,10 @@
 ```text
 oss-tester/
 ├── tests/
-│   └── test_oss_runner.py    # 配置、安全边界、报告、清理和 fake S3 离线测试
+│   ├── test_oss_runner.py    # 配置、安全边界、报告、清理和 fake S3 离线测试
+│   └── test_cdn_fixtures.py  # CDN Fixture 生成、流式上传和 manifest 离线测试
 ├── oss_test.py               # 主程序：CLI、SDK 客户端、测试套件、清理和 JSON 报告
+├── cdn_fixtures.py           # CDN 源站 Fixture 生成、上传和 manifest
 ├── sigv4.py                  # boto3 无法覆盖时使用的独立 SigV4 HTTP fallback
 ├── oss_cli.py                # 旧 CLI 的受保护兼容入口
 ├── oss_capabilities.py       # 旧能力演示脚本的安全转发入口
@@ -23,6 +25,12 @@ oss-tester/
 ├── .env.example              # 不含真实 AK/SK 的环境变量模板
 ├── .gitignore                # 忽略凭证、缓存、报告和本地工具文件
 ├── README.md                 # 安装、执行、安全边界和维护说明
+├── fixtures/cdn/              # 已生成的 CDN 源站测试对象
+│   ├── small.txt, cache.txt   # 小对象和缓存头场景
+│   ├── large.bin, range.bin   # 流式大文件和 Range 场景
+│   ├── gzip.txt               # gzip Content-Encoding 场景
+│   ├── redirect/*.html        # 301/302/307/308 源站页面
+│   └── errors/*.html          # 403/404/500/503 源站页面
 ├── 终端命令记录.txt          # 已脱敏的中文命令汇总
 └── reports/                  # 运行时生成的 JSON 报告，默认不提交 Git
 ```
@@ -88,7 +96,7 @@ python3 -m pip install --user \
   --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
   -r requirements-dev.txt
 python3 -m unittest discover -s tests -v
-python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py sigv4.py
+python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py cdn_fixtures.py sigv4.py
 ```
 
 如系统 Python 启用了 PEP 668，按服务器管理规范使用 `--break-system-packages`，或由管理员安装到系统路径。不要提交 `.venv/`、缓存或报告。
@@ -234,6 +242,24 @@ python3 oss_test.py --profile performance --concurrency 4 --confirm-bucket
 ```bash
 python3 oss_test.py --suites data --object-acl private --confirm-bucket
 ```
+
+### 为 CDN 测试准备源站 Fixture
+
+OSS 数据面验收通过后，可以用兼容 CLI 一次生成并上传 CDN 所需的源站对象。它是独立的 Fixture 准备命令，不属于 `standard` profile。命令从 `.env` 读取 Endpoint、Region、Bucket 和凭证，不把凭证写入命令行；必须确认目标是专用测试桶：
+
+```bash
+python3 oss_cli.py seed-cdn-fixtures \
+  --directory fixtures/cdn \
+  --prefix cdn-test \
+  --manifest reports/cdn-fixtures-{run_id}.json \
+  --confirm-bucket
+```
+
+该命令会自动生成并上传 13 个对象：`small.txt`、8 MiB 的 `large.bin`、Range 用 `range.bin`、长缓存 `cache.txt`、gzip 编码的 `gzip.txt`、301/302/307/308 重定向页面和 404/403/500/503 错误页面。上传使用文件流，不会把大文件一次性读入内存；每次运行都会追加类似 `cdn-test:<timestamp-random-id>:` 的唯一前缀，默认保留对象，不会清理桶或覆盖其他运行。
+
+Manifest 会记录实际 Key、字节数、SHA-256、ETag、Content-Type、Cache-Control、Content-Encoding 和 CDN 规则预期状态，供 CDN 测试项目读取。`redirect/` 和 `errors/` 文件只是源站内容，直接访问通常仍是 200；要得到 3xx/4xx/5xx，需在 CDN 或源站路由中配置对应规则。命令失败会返回非零退出码，并保留已上传的本次唯一前缀供排查。
+
+如需重新生成本地 Fixture 文件，可添加 `--overwrite`；这只改写项目内 `fixtures/cdn/` 文件，不会删除 OSS 对象。后续 CDN 回归应使用 manifest 中的 Key 和 SHA-256，避免依赖固定对象名。
 
 ## 控制面测试
 

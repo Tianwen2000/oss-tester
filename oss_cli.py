@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility CLI for the original OSS commands.
+"""Compatibility CLI for OSS commands and CDN origin fixture seeding.
 
 New acceptance/regression runs belong to ``oss_test.py``.  This file keeps the
 old read/write command names usable while routing SDK construction through the
@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from cdn_fixtures import DEFAULT_FIXTURE_DIRECTORY, DEFAULT_PREFIX, seed_cdn_fixtures
 from oss_test import _safe_name, create_s3_client, load_config, validate_config
 from sigv4 import HttpS3Client, SigV4Signer, parse_error
 
@@ -27,11 +28,68 @@ def get_s3() -> Any:
 
 def _client(args: argparse.Namespace) -> tuple[Any, str]:
     config = load_config()
-    for attr, section_key in (("endpoint", "endpoint"), ("region", "region"), ("bucket", "bucket")):
+    for attr, section_key in (
+        ("endpoint", "endpoint"),
+        ("region", "region"),
+        ("bucket", "bucket"),
+        ("credential_profile", "credential_profile"),
+        ("timeout", "timeout"),
+        ("retry_attempts", "retry_attempts"),
+    ):
         value = getattr(args, attr, None)
-        if value: config["connection"][section_key] = value
+        if value is not None: config["connection"][section_key] = value
     validate_config(config, require_target=True)
     return create_s3_client(config), str(config["connection"]["bucket"])
+
+
+def _seed_cdn_fixtures(args: argparse.Namespace) -> int:
+    if not getattr(args, "confirm_bucket", False):
+        raise SystemExit(
+            "Refusing to seed CDN fixtures without --confirm-bucket. "
+            "Use a dedicated OSS test bucket; objects are retained for CDN tests."
+        )
+    config = load_config()
+    for attr, section_key in (
+        ("endpoint", "endpoint"),
+        ("region", "region"),
+        ("bucket", "bucket"),
+        ("credential_profile", "credential_profile"),
+        ("timeout", "timeout"),
+        ("retry_attempts", "retry_attempts"),
+    ):
+        value = getattr(args, attr, None)
+        if value is not None:
+            config["connection"][section_key] = value
+    validate_config(config, require_target=True)
+    client = create_s3_client(config)
+    base_prefix = args.prefix or DEFAULT_PREFIX
+    manifest_path = args.manifest or "reports/cdn-fixtures-{run_id}.json"
+    manifest_candidate = Path(manifest_path).expanduser()
+    reports_root = (Path.cwd() / "reports").resolve()
+    try:
+        manifest_candidate.resolve().relative_to(reports_root)
+    except ValueError as exc:
+        raise SystemExit("Refusing to write the fixture manifest outside reports/; pass --manifest reports/<name>.json") from exc
+    print("SAFETY: this run uploads only to a unique CDN fixture prefix in the explicitly selected dedicated test bucket.")
+    print(f"Endpoint: {config['connection']['endpoint']}")
+    print(f"Bucket:   {config['connection']['bucket']}")
+    if str(config["connection"]["endpoint"]).lower().startswith("http://"):
+        print("WARNING: endpoint is HTTP; use HTTPS when sending production credentials.")
+    manifest = seed_cdn_fixtures(
+        client,
+        bucket=str(config["connection"]["bucket"]),
+        endpoint=str(config["connection"]["endpoint"]),
+        region=str(config["connection"].get("region") or ""),
+        directory=args.directory or DEFAULT_FIXTURE_DIRECTORY,
+        base_prefix=base_prefix,
+        manifest_path=manifest_path,
+        confirm_bucket=True,
+        overwrite_fixtures=bool(args.overwrite),
+    )
+    print(f"Fixture prefix: {manifest['prefix']}")
+    print(f"Manifest: {manifest.get('manifest_path', manifest_path)}")
+    print(f"Summary: {manifest['status']} objects={manifest['object_count']} errors={len(manifest['errors'])}")
+    return 0 if manifest["status"] == "PASS" else 1
 
 
 def _confirm(args: argparse.Namespace, action: str) -> None:
@@ -60,6 +118,8 @@ def _read_body(response: dict[str, Any], destination: str | None = None) -> tupl
 
 
 def run_legacy(args: argparse.Namespace) -> int:
+    if args.command == "seed-cdn-fixtures":
+        return _seed_cdn_fixtures(args)
     if args.command in {"check", "buckets"}:
         config = load_config()
         for attr, section_key in (("endpoint", "endpoint"), ("region", "region"), ("bucket", "bucket")):
@@ -181,8 +241,11 @@ def run_legacy(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Legacy OSS CLI; use oss_test.py for repeatable tests")
-    parser.add_argument("--endpoint"); parser.add_argument("--region"); parser.add_argument("--bucket"); parser.add_argument("--confirm-risk", action="store_true")
+    parser = argparse.ArgumentParser(description="Protected OSS compatibility CLI and CDN fixture seeder; use oss_test.py for repeatable acceptance tests")
+    parser.add_argument("--endpoint"); parser.add_argument("--region"); parser.add_argument("--bucket")
+    parser.add_argument("--credential-profile", help="boto3 shared credential profile")
+    parser.add_argument("--timeout", type=float); parser.add_argument("--retry-attempts", type=int)
+    parser.add_argument("--confirm-risk", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("check", "buckets", "demo", "bucket-head", "bucket-location", "bucket-create", "bucket-version", "bucket-version-get", "bucket-acl", "bucket-lifecycle", "bucket-encryption", "bucket-cors", "bucket-policy"): sub.add_parser(name)
     for name in ("list", "list-v1", "versions", "mp-list"):
@@ -204,11 +267,23 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("mp-copy"); p.add_argument("--key", required=True); p.add_argument("--src", required=True); p.add_argument("--upload-id", required=True); p.add_argument("--part-number", type=int, required=True)
     p = sub.add_parser("bucket-delete"); p.add_argument("--danger-confirm", action="store_true"); p.add_argument("--force", action="store_true")
     p = sub.add_parser("bucket-tag"); p.add_argument("--tags", required=True)
+    p = sub.add_parser(
+        "seed-cdn-fixtures",
+        help="generate and upload deterministic origin files for CDN data-plane tests",
+    )
+    p.add_argument("--directory", default=str(DEFAULT_FIXTURE_DIRECTORY), help="local fixture directory")
+    p.add_argument("--prefix", default=DEFAULT_PREFIX, help="base prefix; a unique run suffix is always added")
+    p.add_argument("--manifest", help="JSON manifest path; {run_id} is expanded, default reports/cdn-fixtures-{run_id}.json")
+    p.add_argument("--overwrite", action="store_true", help="regenerate existing local fixture files")
+    p.add_argument("--confirm-bucket", action="store_true", help="confirm the configured bucket is dedicated to testing")
     sub.choices["bucket-acl"].add_argument("--private", action="store_true")
     for child in sub.choices.values():
         child.add_argument("--endpoint", default=argparse.SUPPRESS)
         child.add_argument("--region", default=argparse.SUPPRESS)
         child.add_argument("--bucket", default=argparse.SUPPRESS)
+        child.add_argument("--credential-profile", default=argparse.SUPPRESS)
+        child.add_argument("--timeout", type=float, default=argparse.SUPPRESS)
+        child.add_argument("--retry-attempts", type=int, default=argparse.SUPPRESS)
         child.add_argument("--confirm-risk", action="store_true", default=argparse.SUPPRESS)
     return parser
 

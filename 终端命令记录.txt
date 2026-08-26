@@ -55,6 +55,21 @@ python3 oss_test.py \
   --confirm-control-plane \
   --confirm-bucket
 
+【2.2. 为后续 CDN 数据面准备 OSS 源站 Fixture】
+
+从项目根目录执行。命令会自动生成 fixtures/cdn/ 下的 13 个文件并上传到
+专用测试桶的唯一 cdn-test:<timestamp-random-id>: 前缀；对象默认保留，供 CDN
+配置源站和后续回归使用。{run_id} 会由程序替换为本次运行 ID。
+
+python3 oss_cli.py seed-cdn-fixtures \
+  --directory fixtures/cdn \
+  --prefix cdn-test \
+  --manifest reports/cdn-fixtures-{run_id}.json \
+  --confirm-bucket
+
+如果本地 Fixture 文件被修改，需要重新生成时再加 --overwrite。redirect/ 和
+errors/ 文件本身是源站内容，不会自动产生 3xx/4xx/5xx，需由 CDN 规则配置。
+
 【2.1. 保留对象供控制台查看】
 
 cd ~/oss-tester
@@ -84,7 +99,7 @@ DeleteObject、DeleteObjects、AbortMultipartUpload、建桶、版本控制修�
 【6. 离线验证】
 
 python3 -m unittest discover -s tests -v
-python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py sigv4.py
+python3 -m py_compile oss_test.py oss_cli.py oss_capabilities.py cdn_fixtures.py sigv4.py
 
 离线测试使用内存 fake S3，不连接真实 OSS。
 ================================================================
