@@ -20,10 +20,6 @@ oss-tester/
 ├── delete_one_object.py      # 仅允许本次测试前缀的单对象删除入口
 ├── list_buckets.py           # 只读桶列表兼容入口
 ├── oss-test.example.json     # 不含凭证的完整配置示例
-├── docs/                     # 计量、资源包和支付测试规划
-│   ├── build_xmind.py        # 重新生成 XMind 文件的维护脚本
-│   ├── oss_usage_billing_test_plan.md
-│   └── oss_usage_billing_test_plan.xmind
 ├── requirements.txt          # 运行依赖
 ├── requirements-dev.txt      # 离线测试依赖
 ├── .env.example              # 不含真实 AK/SK 的环境变量模板
@@ -287,8 +283,6 @@ python3 oss_test.py --suites control-plane \
 每次运行的 `run_id` 和 `test_prefix` 都不同，不会使用固定的 `oss-test/hello.txt`。报告包含 endpoint、region、bucket、profile、suites、每个用例的状态/耗时/错误/指标、清理计数、总体状态、退出码和中断信息，但不包含 AK/SK。清理只匹配当前 `test_prefix`，不会扫描或删除其他对象、版本、删除标记或桶。
 
 `always` 适合验收；`on-success` 在出现 FAIL 时保留对象便于排查；`never` 保留已完成对象但仍会 Abort 本次运行产生的未完成 Multipart Upload。执行前后可在云控制台确认专用桶没有业务对象。
-
-使用统计、资源包管理和支付金额专项计划见 [Markdown 测试计划](docs/oss_usage_billing_test_plan.md)；也可直接用 XMind 打开 [思维导图文件](docs/oss_usage_billing_test_plan.xmind)。
 
 ## 兼容性说明
 
