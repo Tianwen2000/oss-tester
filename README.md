@@ -237,6 +237,107 @@ python3 oss_test.py --profile multipart --set execution.multipart_part_size_mb=8
 python3 oss_test.py --profile performance --concurrency 4 --confirm-bucket
 ```
 
+### 资源包专项计量命令（谨慎执行）
+
+三种资源包不能用一条命令精确同时打满，必须分别制造请求、容量和流量。执行前先查看控制台剩余额度并预留 3%～5% 安全余量；控制台统计存在延迟，不能连续盲跑到 100%。这些命令只适用于专用测试桶，禁止用于业务桶或生产账号。
+
+**1. 读写请求包：批量写请求（推荐的现有方式）**
+
+当前 `performance` suite 实际批量执行的是 `PutObject`。使用 `--cleanup always` 时，每个对象随后还会产生一次删除写请求和少量列表读请求。下面示例每批约产生 1,000 次上传写请求和 1,000 次删除写请求；`BATCHES` 必须根据资源包剩余次数自行设置：
+
+```bash
+cd ~/oss-tester
+mkdir -p reports/request-fill
+BATCHES=2
+for i in $(seq -w 1 "$BATCHES"); do
+  python3 oss_test.py \
+    --suites performance \
+    --concurrency 8 \
+    --retry-attempts 1 \
+    --cleanup always \
+    --set execution.performance_objects=1000 \
+    --set execution.performance_object_size_kb=1 \
+    --report "reports/request-fill/batch-$i.json" \
+    --confirm-bucket || break
+done
+```
+
+不要把 `BATCHES=48` 当成固定答案；它只适合接近 48,000 次上传额度且尚未计算删除请求的场景。每批完成后等待控制台更新，再决定是否补跑。该命令不会长期保留对象，但上传和删除请求都会计量。
+
+**2. 存储容量包：保留对象的同一命令**
+
+如果希望使用已有测试逻辑产生约 4.8 GB 的持久对象，可以保留一批 1,000 个对象。`--cleanup never` 会保留本次唯一前缀下的对象，直到你确认统计后手工清理：
+
+```bash
+cd ~/oss-tester
+python3 oss_test.py \
+  --suites performance \
+  --concurrency 8 \
+  --retry-attempts 1 \
+  --cleanup never \
+  --set execution.performance_objects=1000 \
+  --set execution.performance_object_size_kb=4500 \
+  --report reports/capacity-fill.json \
+  --confirm-bucket
+```
+
+理论上传量约为 `1,000 × 4,500 KiB = 4.61 GB`（约 4.39 GiB，实际按平台的 GB/GiB 定义显示），同时会消耗约 1,000 次写请求。容量统计通常按存储时间或日均容量结算，不能在上传完成后立即判定已计费。终端输出的 `Prefix` 是唯一清理范围；确认统计后只删除该前缀，不要清空整个桶。
+
+如果测试机有足够磁盘、希望只消耗一次写请求，可上传一个小于 5 GB 的流式大对象：
+
+```bash
+cd ~/oss-tester
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+KEY="metering-test/$RUN_ID/capacity.bin"
+FILE="/tmp/oss-capacity-$RUN_ID.bin"
+fallocate -l 4500000000 "$FILE" 2>/dev/null || truncate -s 4500000000 "$FILE"
+python3 oss_cli.py upload --file "$FILE" --key "$KEY"
+echo "Retained capacity object: $KEY"
+```
+
+该方式约占 4.5 GB 容量，只产生一次 `PutObject`，但需要本地文件系统可创建该大小的文件并等待较长上传时间；确认控制台数据后，用 `python3 oss_cli.py --confirm-risk delete --key "$KEY"` 删除并移除临时文件。删除也会计入写请求。
+
+**3. 流量包：保留 8 MiB 对象并流式下载**
+
+先创建一个 8 MiB 对象并保留，然后用 8 个受限 worker 下载到 `/dev/null`，不会把响应保存到本地。下面 `1152 × 8 MiB ≈ 9 GiB`，给 10 GB 流量包预留余量；应按控制台剩余流量调整 `PER_WORKER`：
+
+```bash
+cd ~/oss-tester
+SOURCE_REPORT=reports/traffic-source.json
+python3 oss_test.py \
+  --suites performance \
+  --concurrency 1 \
+  --retry-attempts 1 \
+  --cleanup never \
+  --set execution.performance_objects=1 \
+  --set execution.performance_object_size_kb=8192 \
+  --report "$SOURCE_REPORT" \
+  --confirm-bucket
+
+PREFIX=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["test_prefix"])' "$SOURCE_REPORT")
+KEY="${PREFIX}performance/0.bin"
+PER_WORKER=144
+pids=()
+for worker in $(seq 1 8); do
+  (
+    for n in $(seq 1 "$PER_WORKER"); do
+      python3 oss_cli.py download --key "$KEY" --dest /dev/null >/dev/null || exit 1
+    done
+  ) &
+  pids+=("$!")
+done
+status=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || status=1
+done
+if [ "$status" -ne 0 ]; then exit "$status"; fi
+echo "Downloaded $((8 * PER_WORKER)) times from $KEY"
+```
+
+每次下载都会产生一个读请求，并产生约 8 MiB 公网下行流量；如果通过 CDN 域名下载，计量分类可能变为 CDN 回源或 CDN 下行，必须结合产品计费规则和日志核对。流量统计更新后，按输出的 `Prefix` 清理源对象。
+
+这三组命令都不是默认验收流程。任何资源包即将耗尽、统计未更新、请求出现重试或控制台计量口径未确认时，应先停止，保存报告和时间线，再由管理员决定是否继续。
+
 对象 ACL 按需修改。默认只读取 ACL；`public-read` 必须同时显式确认：
 
 ```bash
