@@ -270,32 +270,23 @@ done
 
 ```bash
 cd ~/oss-tester
+mkdir -p reports
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
 python3 oss_test.py \
   --suites performance \
   --concurrency 8 \
-  --retry-attempts 1 \
+  --retry-attempts 3 \
   --cleanup never \
   --set execution.performance_objects=1000 \
   --set execution.performance_object_size_kb=4500 \
-  --report reports/capacity-fill.json \
+  --report "reports/capacity-fill-$RUN_ID.json" \
   --confirm-bucket
 ```
 
 理论上传量约为 `1,000 × 4,500 KiB = 4.61 GB`（约 4.39 GiB，实际按平台的 GB/GiB 定义显示），同时会消耗约 1,000 次写请求。容量统计通常按存储时间或日均容量结算，不能在上传完成后立即判定已计费。终端输出的 `Prefix` 是唯一清理范围；确认统计后只删除该前缀，不要清空整个桶。
 
-如果测试机有足够磁盘、希望只消耗一次写请求，可上传一个小于 5 GB 的流式大对象：
-
-```bash
-cd ~/oss-tester
-RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-KEY="metering-test/$RUN_ID/capacity.bin"
-FILE="/tmp/oss-capacity-$RUN_ID.bin"
-fallocate -l 4500000000 "$FILE" 2>/dev/null || truncate -s 4500000000 "$FILE"
-python3 oss_cli.py upload --file "$FILE" --key "$KEY"
-echo "Retained capacity object: $KEY"
-```
-
-该方式约占 4.5 GB 容量，只产生一次 `PutObject`，但需要本地文件系统可创建该大小的文件并等待较长上传时间；确认控制台数据后，用 `python3 oss_cli.py --confirm-risk delete --key "$KEY"` 删除并移除临时文件。删除也会计入写请求。
+这是容量计量的推荐兼容方式。不要为了减少请求数改成单次上传 4.5 GB 对象：部分 S3 兼容网关会在长连接中出现 TLS EOF，或限制 Multipart 分片的最大尺寸；中断上传还可能留下未完成的 Multipart Upload。多个 4,500 KiB 对象更容易重试和定位失败，也不会触碰标准 Multipart 最小分片约束。命令结束并显示 `PASS` 才表示上传完成；`--cleanup never` 会保留对象，重复执行会继续增加存储容量和费用。
 
 **3. 流量包：保留 8 MiB 对象并流式下载**
 
@@ -303,38 +294,53 @@ echo "Retained capacity object: $KEY"
 
 ```bash
 cd ~/oss-tester
-SOURCE_REPORT=reports/traffic-source.json
-python3 oss_test.py \
-  --suites performance \
-  --concurrency 1 \
-  --retry-attempts 1 \
-  --cleanup never \
-  --set execution.performance_objects=1 \
-  --set execution.performance_object_size_kb=8192 \
-  --report "$SOURCE_REPORT" \
-  --confirm-bucket
+mkdir -p reports
 
-PREFIX=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["test_prefix"])' "$SOURCE_REPORT")
-KEY="${PREFIX}performance/0.bin"
-PER_WORKER=144
-pids=()
-for worker in $(seq 1 8); do
-  (
-    for n in $(seq 1 "$PER_WORKER"); do
-      python3 oss_cli.py download --key "$KEY" --dest /dev/null >/dev/null || exit 1
-    done
-  ) &
-  pids+=("$!")
-done
-status=0
-for pid in "${pids[@]}"; do
-  wait "$pid" || status=1
-done
-if [ "$status" -ne 0 ]; then exit "$status"; fi
-echo "Downloaded $((8 * PER_WORKER)) times from $KEY"
+# 子 Shell 可让失败返回非零状态，但不会退出当前 SSH 会话。
+(
+  RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  SOURCE_REPORT="reports/traffic-source-$RUN_ID.json"
+
+  python3 oss_test.py \
+    --suites performance \
+    --concurrency 1 \
+    --retry-attempts 1 \
+    --cleanup never \
+    --set execution.performance_objects=1 \
+    --set execution.performance_object_size_kb=8192 \
+    --report "$SOURCE_REPORT" \
+    --confirm-bucket || exit 1
+
+  PREFIX=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["test_prefix"])' "$SOURCE_REPORT") || exit 1
+  KEY="${PREFIX}performance/0.bin"
+  PER_WORKER=144
+  pids=()
+
+  echo "Traffic source object: $KEY"
+  for worker in $(seq 1 8); do
+    (
+      for n in $(seq 1 "$PER_WORKER"); do
+        python3 oss_cli.py download --key "$KEY" --dest /dev/null >/dev/null || exit 1
+      done
+    ) &
+    pids+=("$!")
+  done
+
+  status=0
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+  if [ "$status" -ne 0 ]; then
+    echo "FAIL: one or more download workers failed" >&2
+    exit 1
+  fi
+
+  echo "PASS: downloaded $((8 * PER_WORKER)) times from $KEY"
+  echo "Estimated traffic: 9 GiB"
+)
 ```
 
-每次下载都会产生一个读请求，并产生约 8 MiB 公网下行流量；如果通过 CDN 域名下载，计量分类可能变为 CDN 回源或 CDN 下行，必须结合产品计费规则和日志核对。流量统计更新后，按输出的 `Prefix` 清理源对象。
+每次下载都会产生一个读请求，并产生约 8 MiB 公网下行流量。只有最后显示 `PASS: downloaded 1152 times` 才代表全部 worker 成功；后台任务编号或提前打印的对象 Key 都不代表完成。如果通过 CDN 域名下载，计量分类可能变为 CDN 回源或 CDN 下行，必须结合产品计费规则和日志核对。流量统计更新后，按输出的 `Prefix` 清理源对象。
 
 这三组命令都不是默认验收流程。任何资源包即将耗尽、统计未更新、请求出现重试或控制台计量口径未确认时，应先停止，保存报告和时间线，再由管理员决定是否继续。
 
